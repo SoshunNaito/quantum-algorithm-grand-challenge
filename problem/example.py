@@ -72,7 +72,7 @@ class RunAlgorithm:
         return energy_final, qc_time_final
 
     def get_result(self) -> Any:
-        n_site = 4
+        n_site = 2
         n_qubits = 2 * n_site
         ham = load_operator(
             file_name=f"{n_qubits}_qubits_H",
@@ -83,7 +83,7 @@ class RunAlgorithm:
         hamiltonian = operator_from_openfermion_op(jw_hamiltonian)
 
         # make hf + HEreal ansatz
-        hf_gates = ComputationalBasisState(n_qubits, bits=0b00001111).circuit.gates
+        hf_gates = ComputationalBasisState(n_qubits, bits=2**n_site-1).circuit.gates
         hw_ansatz = HardwareEfficientReal(qubit_count=n_qubits, reps=1)
         hw_hf = hw_ansatz.combine(hf_gates)
 
