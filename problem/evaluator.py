@@ -4,8 +4,8 @@ import traceback
 
 from typing import Optional
 
-from example import RunAlgorithm
-# from answer import RunAlgorithm
+# from example import RunAlgorithm
+from answer import RunAlgorithm
 
 num_exec = 3
 ref_value = -4  #: reference value of 4 qubits
