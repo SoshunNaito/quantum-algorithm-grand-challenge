@@ -6,8 +6,9 @@ from typing import Optional
 
 from example import RunAlgorithm
 
-num_exec = 1
-ref_value = -8.42442890089805  #: reference value of 8 qubits
+num_exec = 3
+ref_value = -4  #: reference value of 4 qubits
+# ref_value = -8.42442890089805  #: reference value of 8 qubits
 
 """
 reference values (n_qubits: reference_value)
