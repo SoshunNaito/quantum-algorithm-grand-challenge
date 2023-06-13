@@ -5,18 +5,15 @@ import numpy as np
 from scipy.optimize import minimize
 from typing import Any
 
-from openfermion.transforms import jordan_wigner
-from openfermion.utils import load_operator
-from quri_parts.algo.ansatz import HardwareEfficientReal
-from quri_parts.core.measurement import bitwise_commuting_pauli_measurement
-from quri_parts.core.sampling.shots_allocator import (
-    create_proportional_shots_allocator
+from utils.challenge_2023 import QuantumCircuitTimeExceededError
+from common import (
+    prepare_problem, prepare_ansatz, prepare_sampling_estimator,
+    CostEvaluator,
+    challenge_sampling,
 )
-from quri_parts.core.state import ParametricCircuitQuantumState, ComputationalBasisState
-from quri_parts.openfermion.operator import operator_from_openfermion_op
-
-from utils.challenge_2023 import ChallengeSampling, QuantumCircuitTimeExceededError
-challenge_sampling = ChallengeSampling(noise=True)
+from FourierAnsatz import param_convert_func_FourierAnsatz
+from CosineSum.CosineSumGenerator import GenerateCosineSumInstance
+from CosineSum.CosineSumSolver_CG import CosineSumSolver_CG
 
 np.set_printoptions(formatter={'float': '{: 0.8f}'.format}, linewidth=10000)
 
@@ -43,55 +40,48 @@ class RunAlgorithm:
         ####################################
         """
 
-        # problem setting
-        n_site = 2
-        n_qubits = 2 * n_site
-        ham = load_operator(
-            file_name=f"{n_qubits}_qubits_H",
-            data_directory="../hamiltonian",
-            plain_text=False,
-        )
-        jw_hamiltonian = jordan_wigner(ham)
-        hamiltonian = operator_from_openfermion_op(jw_hamiltonian)
+        n_qubits = 8
+        hamiltonian = prepare_problem(n_qubits)
+        parametric_state_sc, parametric_state_it = prepare_ansatz("sc", n_qubits), prepare_ansatz("it", n_qubits)
+        sampling_estimator_sc_1000 = prepare_sampling_estimator("sc", 1000)
+        sampling_estimator_it_1000 = prepare_sampling_estimator("it", 500)
 
-        # prepare ansatz
-        hf_gates = ComputationalBasisState(n_qubits, bits=2**n_site-1).circuit.gates
-        hw_ansatz = HardwareEfficientReal(qubit_count=n_qubits, reps=2)
-        hw_hf = hw_ansatz.combine(hf_gates)
-        parametric_state = ParametricCircuitQuantumState(n_qubits, hw_hf)
+        evaluator_casual = CostEvaluator(hamiltonian, parametric_state_sc, sampling_estimator_sc_1000, param_convert_func_FourierAnsatz)
+        evaluator_formal = CostEvaluator(hamiltonian, parametric_state_it, sampling_estimator_it_1000, param_convert_func_FourierAnsatz)
 
-        # parameter settings for measurement
-        hardware, shots_approx, shots_precise = "sc", 1000, 10000
-        # hardware, shots_approx, shots_precise = "it", 100, 3000
-        sampling_estimator_approx = challenge_sampling.create_concurrent_parametric_sampling_estimator(
-            total_shots = shots_approx,
-            measurement_factory = bitwise_commuting_pauli_measurement,
-            shots_allocator = create_proportional_shots_allocator(),
-            hardware_type = hardware
-        )
-        sampling_estimator_precise = challenge_sampling.create_concurrent_parametric_sampling_estimator(
-            total_shots = shots_precise,
-            measurement_factory = bitwise_commuting_pauli_measurement,
-            shots_allocator = create_proportional_shots_allocator(),
-            hardware_type = hardware
-        )
-
-        tmp_cost, tmp_params = 0, np.zeros(hw_ansatz.parameter_count)
-        def eval(params, estimator, time_limit: float):
-            if(challenge_sampling.total_quantum_circuit_time > time_limit):
-                raise QuantumCircuitTimeExceededError(challenge_sampling.total_quantum_circuit_time)
-            
-            nonlocal tmp_cost, tmp_params
-            cost = estimator(hamiltonian, parametric_state, [params])[0].value.real
-            if cost < tmp_cost:
-                tmp_cost = cost
-                tmp_params = params
-                print("params updated:", tmp_cost, tmp_params)
-            return cost
+        num_init_points = 1
+        num_loop_counts = 13
+        num_params = parametric_state_sc._circuit.parameter_count
+        for init_point_idx in range(num_init_points):
+            current_params = (np.random.rand(num_params) * 2 * np.pi).tolist()
+            for loop_idx in range(num_loop_counts):
+                for param_idx in range(0, num_params, 3):
+                    evaluator = evaluator_formal
+                    cosineSumInstance = GenerateCosineSumInstance(
+                        3, True,
+                        lambda params: evaluator.eval(
+                            current_params[: param_idx] + params + current_params[param_idx + 3 :],
+                            # show_output=True
+                        ),
+                        7 # 13 + 7 = 20 evaluations
+                    )
+                    # 4 * (10 * 0.08534399999999999 + 1 * 1.1637) * 6 * 20 = 1000
+                    optimal_params = CosineSumSolver_CG(cosineSumInstance).solve(
+                        [
+                            (np.random.rand(3) * 2 * np.pi).tolist()
+                            for _ in range(100)
+                        ], True
+                    )
+                    current_params[param_idx : param_idx + 3] = optimal_params
+                    print(cosineSumInstance.eval(optimal_params), "vs", evaluator_casual.eval(current_params), "vs", evaluator_formal.eval(current_params))
+            print()
+        print(min(evaluator_casual.min_cost, evaluator_formal.min_cost))
+        print(challenge_sampling.total_quantum_circuit_time)
+        exit()
 
         # optimize
-        n_init_params = 10
-        ans_cost, ans_params = 0, np.zeros(hw_ansatz.parameter_count)
+        n_init_params = 3
+        ans_cost, ans_params = 0, np.zeros(parametric_state._circuit.parameter_count)
         for itr in range(n_init_params):
             print("iteration:", itr)
             remaining_time = 1000 - challenge_sampling.total_quantum_circuit_time
@@ -99,30 +89,28 @@ class RunAlgorithm:
             time_end_approx = challenge_sampling.total_quantum_circuit_time + allocated_time * 0.3
             time_end_precise = challenge_sampling.total_quantum_circuit_time + allocated_time
 
-            init_params = np.random.rand(hw_ansatz.parameter_count) * 2 * np.pi
+            init_params = np.random.rand(parametric_state._circuit.parameter_count) * 2 * np.pi
             print("<< approx >>")
             try:
-                tmp_cost, tmp_params = 0, np.zeros(hw_ansatz.parameter_count)
+                evaluator_approx.reset()
                 result = minimize(
-                    lambda params: eval(params, sampling_estimator_approx, time_end_approx),
+                    lambda params: evaluator_approx.eval(params, time_end_approx, False, True),
                     init_params,
                     method = "Powell",
                 )
             except QuantumCircuitTimeExceededError: pass
-            init_params = tmp_params
+            ans_cost, ans_params = evaluator_approx.min_cost, evaluator_approx.min_params
             
             print("<< precise >>")
             try:
-                tmp_cost, tmp_params = 0, np.zeros(hw_ansatz.parameter_count)
+                evaluator_precise.reset()
                 result = minimize(
-                    lambda params: eval(params, sampling_estimator_precise, time_end_precise),
-                    init_params,
+                    lambda params: evaluator_precise.eval(params, time_end_precise, False, True),
+                    ans_params,
                     method = "Powell",
                 )
             except QuantumCircuitTimeExceededError: pass
-            if(tmp_cost < ans_cost):
-                ans_cost = tmp_cost
-                ans_params = tmp_params
+            ans_cost, ans_params = evaluator_precise.min_cost, evaluator_precise.min_params
             print()
         return ans_cost
 
