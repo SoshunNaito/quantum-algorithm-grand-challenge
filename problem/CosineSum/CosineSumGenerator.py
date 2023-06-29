@@ -22,12 +22,12 @@ def GenerateCosineSumInstance(
     for sample_idx in range(num_samples):
         _input = []
         input_params = list(np.random.rand(num_theta_params) * np.pi * 2)
-        for i in range(len(input_params)):
-            for j in range(i + 1, len(input_params)):
+        for i in range(num_theta_params):
+            for j in range(i + 1, num_theta_params):
                 _input.append(math.cos(input_params[i] - input_params[j]))
                 _input.append(math.sin(input_params[i] - input_params[j]))
         if(has_linear_term):
-            for i in range(len(input_params)):
+            for i in range(num_theta_params):
                 _input.append(math.cos(input_params[i]))
                 _input.append(math.sin(input_params[i]))
         _input.append(1)
@@ -53,6 +53,7 @@ def GenerateCosineSumInstance(
             quad_amplitudes[j][i] = quad_amplitudes[i][j]
             quad_offsets[i][j] = math.atan2(-y, x)
             quad_offsets[j][i] = -quad_offsets[i][j]
+            
             counter += 1
     if(has_linear_term):
         for i in range(num_theta_params):

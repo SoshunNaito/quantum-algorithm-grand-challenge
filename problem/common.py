@@ -1,6 +1,7 @@
-from calendar import c
 import sys
 from typing import Callable
+
+from FourierAnsatz import FourierAnsatz
 sys.path.append("../")
 
 from openfermion.transforms import jordan_wigner
@@ -28,7 +29,7 @@ from utils.challenge_2023 import ChallengeSampling, QuantumCircuitTimeExceededEr
 challenge_sampling = ChallengeSampling(noise=True)
 noiseless_sampling = ChallengeSampling(noise=False)
 
-from FourierAnsatz import FourierAnsatz
+from FourierAnsatz import FourierAnsatz_4, FourierAnsatz_8
 
 def prepare_problem(n_qubits: int) -> Operator:
     if(n_qubits not in [4, 8]):
@@ -43,45 +44,52 @@ def prepare_problem(n_qubits: int) -> Operator:
     )
     jw_hamiltonian = jordan_wigner(ham)
     hamiltonian = operator_from_openfermion_op(jw_hamiltonian)
+
+    # for pauli, coef in hamiltonian.items():
+    #     S = str(pauli).split(" ")
+    #     p = ["I"] * n_qubits
+    #     for s in S:
+    #         if(s[0] == "I"): continue
+    #         p[int(s[1])] = s[0]
+    #     print("".join(p), f"{coef.real: .12f}")
+    # exit()
     return hamiltonian
 
-def prepare_ansatz(hardware_type: str, n_qubits: int):
+def prepare_ansatz(hardware_type: str, n_qubits: int) -> FourierAnsatz:
     n_site = n_qubits // 2
     # hw_ansatz = HardwareEfficientReal(qubit_count=n_qubits, reps=3)
-    if(n_qubits == 4):
-        hw_ansatz = FourierAnsatz(hardware_type, n_qubits, [[0,1,2,3],[0,2,1,3],[0,3,1,2]])
-    elif(n_qubits == 8):
-        hw_ansatz = FourierAnsatz(hardware_type, n_qubits, [[0,1,2,3,4,5,6,7],[0,2,1,3,4,6,5,7],[0,4,1,5,2,6,3,7]])
+    if(n_qubits == 4): hw_ansatz = FourierAnsatz_4(hardware_type)
+    elif(n_qubits == 8): hw_ansatz = FourierAnsatz_8(hardware_type)
     else:
         print("n_qubits must be 4 or 8")
         exit()
-    return ParametricCircuitQuantumState(n_qubits, hw_ansatz)
-
-    hf_gates = ComputationalBasisState(n_qubits, bits=2**n_site-1).circuit.gates
-    hw_hf = hw_ansatz.combine(hf_gates)
-    return ParametricCircuitQuantumState(n_qubits, hw_hf)
+    return hw_ansatz
 
 def prepare_sampling_estimator(
-    hardware_type: str, num_shots: int,
+    hardware_type: str, qubit_to_coord: dict[int, tuple[int, int]], num_shots: int,
     shots_allocator = create_proportional_shots_allocator()
 ):
     sampling_estimator = challenge_sampling.create_concurrent_parametric_sampling_estimator(
         total_shots = num_shots,
         measurement_factory = bitwise_commuting_pauli_measurement,
         shots_allocator = shots_allocator,
-        hardware_type = hardware_type
-    )    
+        hardware_type = hardware_type,
+        qubit_to_coord=qubit_to_coord
+    )
     return sampling_estimator
 
 def prepare_noiseless_estimator(
-    hardware_type: str, num_shots: int,
+    hardware_type: str,
+    qubit_to_coord: dict[int, tuple[int, int]],
+    num_shots: int,
     shots_allocator = create_proportional_shots_allocator()
 ):
     sampling_estimator = noiseless_sampling.create_concurrent_parametric_sampling_estimator(
         total_shots = num_shots,
         measurement_factory = bitwise_commuting_pauli_measurement,
         shots_allocator = shots_allocator,
-        hardware_type = hardware_type
+        hardware_type = hardware_type,
+        qubit_to_coord=qubit_to_coord
     )
     return sampling_estimator
 

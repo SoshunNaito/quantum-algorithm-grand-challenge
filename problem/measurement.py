@@ -42,7 +42,35 @@ from common import (
     noiseless_sampling
 )
 from FourierAnsatz import param_convert_func_FourierAnsatz
+from problem.FourierAnsatz import FourierAnsatz
 from utils.challenge_2023 import ChallengeSampling
+
+class MeasurementResult:
+    def __init__(self):
+        self.coefs: dict[PauliLabel, complex] = {}
+        self.num_measurements: dict[PauliLabel, list[int]] = {}
+        self.expectation_values: dict[PauliLabel, list[float]] = {}
+        self.measurement_results: dict[PauliLabel, list[complex]] = {}
+        self.const: float = 0.0
+    
+    def reset(self):
+        self.coefs.clear()
+        self.num_measurements.clear()
+        self.expectation_values.clear()
+        self.measurement_results.clear()
+    
+    def add_result(
+        self, pauli_label: PauliLabel, coef: complex,
+        num_measurement: int, expectation_value: float, measurement_result: complex
+    ):
+        if(pauli_label not in self.coefs):
+            self.coefs[pauli_label] = coef
+            self.num_measurements[pauli_label] = []
+            self.expectation_values[pauli_label] = []
+            self.measurement_results[pauli_label] = []
+        self.num_measurements[pauli_label].append(num_measurement)
+        self.expectation_values[pauli_label].append(expectation_value)
+        self.measurement_results[pauli_label].append(measurement_result)
 
 def mitigated_pauli_expectation_estimator(
     counts: MeasurementCounts,
@@ -82,7 +110,10 @@ def mitigated_pauli_sum_expectation_estimator(
     pauli_set: CommutablePauliSet,
     coefs: Mapping[PauliLabel, complex],
     reconstructor_factory: PauliReconstructorFactory,
-    bit_flip_rate: float
+    measurement_result: MeasurementResult,
+    bit_flip_rate: float,
+    coef_identity: complex,
+    depolarizing_rate: float,
 ) -> complex:
     """Estimate expectation value of a weighted sum of commutable Pauli
     operators from measurement counts and Pauli reconstructor.
@@ -90,48 +121,58 @@ def mitigated_pauli_sum_expectation_estimator(
     Note that this function calculates the sum for only Pauli operators
     contained in both of ``pauli_set`` and ``coefs``.
     """
-    pauli_exp_and_coefs = [
-        (
-            mitigated_pauli_expectation_estimator(counts, pauli, reconstructor_factory, bit_flip_rate),
-            coefs[pauli],
-        )
-        for pauli in pauli_set
-        if pauli in coefs
-    ]
+    pauli_exp_and_coefs = []
+    for pauli in pauli_set:
+        if(pauli in coefs):
+            pauli_exp_and_coefs.append(
+                (
+                    mitigated_pauli_expectation_estimator(counts, pauli, reconstructor_factory, bit_flip_rate),
+                    coefs[pauli]
+                )
+            )
+            measurement_result.add_result(
+                pauli, coefs[pauli],
+                math.floor(sum(counts.values()) + 0.5),
+                mitigated_pauli_expectation_estimator(counts, pauli, reconstructor_factory, bit_flip_rate),
+                mitigated_pauli_expectation_estimator(counts, pauli, reconstructor_factory, bit_flip_rate) * coefs[pauli]
+            )
     if not pauli_exp_and_coefs:
         return 0
     pauli_exp_seq, coef_seq = zip(*pauli_exp_and_coefs)
-    return cast(complex, np.inner(pauli_exp_seq, coef_seq))
+    raw_energy = cast(complex, np.inner(pauli_exp_seq, coef_seq))
+    return raw_energy
+    energy = 0 + (raw_energy - 0) / (1 - depolarizing_rate)
+    return energy
 
-def estimate_variance_from_measurement(
-    counts: MeasurementCounts,
-    pauli_set: CommutablePauliSet,
-    coefs: Mapping[PauliLabel, complex],
-    reconstructor_factory: PauliReconstructorFactory,
-) -> float:
-    ans = 0
-    for pauli_1 in pauli_set:
-        coef1 = coefs[pauli_1].real
-        for pauli_2 in pauli_set:
-            coef2 = coefs[pauli_2].real
-            cov = general_pauli_covariance_estimator(counts, pauli_1, pauli_2, reconstructor_factory)
-            ans += coef1 * coef2 * cov
-    return ans
+# def estimate_variance_from_measurement(
+#     counts: MeasurementCounts,
+#     pauli_set: CommutablePauliSet,
+#     coefs: Mapping[PauliLabel, complex],
+#     reconstructor_factory: PauliReconstructorFactory,
+# ) -> float:
+#     ans = 0
+#     for pauli_1 in pauli_set:
+#         coef1 = coefs[pauli_1].real
+#         for pauli_2 in pauli_set:
+#             coef2 = coefs[pauli_2].real
+#             cov = general_pauli_covariance_estimator(counts, pauli_1, pauli_2, reconstructor_factory)
+#             ans += coef1 * coef2 * cov
+#     return ans
 
-def get_measurement_info(
-    _op: Operator,
-    _pauli_sets: Iterable[CommutablePauliSet], _pauli_recs: Iterable[PauliReconstructorFactory],
-    _sampling_counts: dict[CommutablePauliSet, MeasurementCounts]
-) -> Tuple[dict[CommutablePauliSet, int], dict[CommutablePauliSet, float]]:
-    count_dict, var_dict = {}, {}
-    for pauli_set, pauli_rec in zip(
-        _pauli_sets, _pauli_recs
-    ):
-        counts = _sampling_counts[pauli_set]
-        count_dict[pauli_set] = sum(counts.values())
-        est_var = estimate_variance_from_measurement(counts, pauli_set, _op, pauli_rec)
-        var_dict[pauli_set] = est_var
-    return count_dict, var_dict
+# def get_measurement_info(
+#     _op: Operator,
+#     _pauli_sets: Iterable[CommutablePauliSet], _pauli_recs: Iterable[PauliReconstructorFactory],
+#     _sampling_counts: dict[CommutablePauliSet, MeasurementCounts]
+# ) -> Tuple[dict[CommutablePauliSet, int], dict[CommutablePauliSet, float]]:
+#     count_dict, var_dict = {}, {}
+#     for pauli_set, pauli_rec in zip(
+#         _pauli_sets, _pauli_recs
+#     ):
+#         counts = _sampling_counts[pauli_set]
+#         count_dict[pauli_set] = sum(counts.values())
+#         est_var = estimate_variance_from_measurement(counts, pauli_set, _op, pauli_rec)
+#         var_dict[pauli_set] = est_var
+#     return count_dict, var_dict
 
 def get_measurement_value(
     _op: Operator, const: complex,
@@ -155,7 +196,9 @@ def get_mitigated_measurement_value(
     _op: Operator, const: complex,
     _pauli_sets: Iterable[CommutablePauliSet], _pauli_recs: Iterable[PauliReconstructorFactory],
     _sampling_counts: dict[CommutablePauliSet, MeasurementCounts],
-    bit_flip_rate: float
+    measurement_result: MeasurementResult,
+    bit_flip_rate: float,
+    depolarizing_rate: float
 ) -> Tuple[float, float]:
     val, var_sum = const, 0.0
     for pauli_set, pauli_rec in zip(
@@ -163,7 +206,7 @@ def get_mitigated_measurement_value(
     ):
         counts = _sampling_counts[pauli_set]
         val += mitigated_pauli_sum_expectation_estimator(
-            counts, pauli_set, _op, pauli_rec, bit_flip_rate
+            counts, pauli_set, _op, pauli_rec, measurement_result, bit_flip_rate, _op.constant, depolarizing_rate
         )
         var_sum += general_pauli_sum_sample_variance(
             counts, pauli_set, _op, pauli_rec
@@ -207,125 +250,149 @@ def create_variance_proportional_shots_allocator(
 
 class Measure:
     def __init__(
-        self, noise: bool, hardware_type: str, total_shots: int,
-        hamiltonian: Operator, parametric_circuit: ParametricCircuitQuantumState,
+        self, noise: bool, hardware_type: str,
+        hamiltonian: Operator, ansatz: FourierAnsatz,
+        total_shots: int,
         optimization_level: int = 0,
-        bit_flip_error: float = 0
+        bit_flip_error: float = 0,
+        depolarizing_error: float = 0
     ) -> None:
         self.noise = noise
         self.hardware_type = hardware_type
+        self.qubit_to_coord = ansatz.qubit_to_coord
+        self.parameter_convert_func = ansatz.parameter_convert_func
         self.total_shots = total_shots
         self.hamiltonian = hamiltonian
-        self.parametric_circuit = parametric_circuit
+        self.parametric_circuit = ParametricCircuitQuantumState(ansatz.qubit_count, ansatz._circuit)
         self.optimization_level = optimization_level
         self.bit_flip_error = bit_flip_error
+        self.depolarizing_error = depolarizing_error
+        self.measurement_result = MeasurementResult()
     
     def measure(self, params: list[float]) -> Tuple[float, float]:
         prepare_estimator = prepare_sampling_estimator if self.noise else prepare_noiseless_estimator
 
-        if(self.optimization_level == 0):
-            estimator = prepare_estimator(self.hardware_type, self.total_shots)
-            estimate: _Estimate = estimator(self.hamiltonian, self.parametric_circuit, [params])[0]
+        # if(self.optimization_level == 0):
+        if(True):
+            estimator = prepare_estimator(self.hardware_type, self.qubit_to_coord, self.total_shots)
+            estimate: _Estimate = estimator(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
             cost, error = estimate.value.real, estimate.error
 
             merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
+            pauli_info = []
             for pauli_set, counts in zip(estimate._pauli_sets, estimate._sampling_counts):
                 d = {}
                 for k, v in counts.items(): d[k] = v
                 merged_sampling_counts[pauli_set] = d
-            cost, error = get_measurement_value(
-                estimate._op, estimate._const,
-                estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts
-            )
+
+                for pauli in pauli_set:
+                    if(abs(estimate._op[pauli].real) > 1e-3):
+                        pauli_info.append((estimate._op[pauli].real, str(pauli)))
+            
+            for coef, pauli_str in sorted(pauli_info, key=lambda x: -abs(x[0])):
+                print(coef, pauli_str)
+            exit()
+
+            # cost, error = get_measurement_value(
+            #     estimate._op, estimate._const,
+            #     estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts
+            # )
+            # cost, error = get_mitigated_measurement_value(
+            #     estimate._op, estimate._const,
+            #     estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts,
+            #     self.bit_flip_error, 0
+            # )
+            self.measurement_result.const = estimate._const.real
             cost, error = get_mitigated_measurement_value(
                 estimate._op, estimate._const,
                 estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts,
-                self.bit_flip_error
+                self.measurement_result,
+                self.bit_flip_error, self.depolarizing_error
             )
             return cost, error
         
-        elif(self.optimization_level == 1):
-            merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
+        # elif(self.optimization_level == 1):
+        #     merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
 
-            allocator_1 = create_equipartition_shots_allocator()
-            estimator_1 = prepare_estimator(self.hardware_type, 50, allocator_1)
-            estimate_1: _Estimate = estimator_1(self.hamiltonian, self.parametric_circuit, [params])[0]
-            for pauli_set, counts in zip(estimate_1._pauli_sets, estimate_1._sampling_counts):
-                d = {}
-                for k, v in counts.items(): d[k] = v
-                merged_sampling_counts[pauli_set] = d
-            count_dict_1, var_dict_1 = get_measurement_info(
-                estimate_1._op,
-                estimate_1._pauli_sets, estimate_1._pauli_recs, merged_sampling_counts
-            )
+        #     allocator_1 = create_equipartition_shots_allocator()
+        #     estimator_1 = prepare_estimator(self.hardware_type, 50, allocator_1)
+        #     estimate_1: _Estimate = estimator_1(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        #     for pauli_set, counts in zip(estimate_1._pauli_sets, estimate_1._sampling_counts):
+        #         d = {}
+        #         for k, v in counts.items(): d[k] = v
+        #         merged_sampling_counts[pauli_set] = d
+        #     count_dict_1, var_dict_1 = get_measurement_info(
+        #         estimate_1._op,
+        #         estimate_1._pauli_sets, estimate_1._pauli_recs, merged_sampling_counts
+        #     )
             
-            allocator_2 = create_variance_proportional_shots_allocator(count_dict_1, var_dict_1)
-            estimator_2 = prepare_estimator(self.hardware_type, self.total_shots - sum(count_dict_1.values()), allocator_2)
-            estimate_2: _Estimate = estimator_2(self.hamiltonian, self.parametric_circuit, [params])[0]
-            for pauli_set, counts in zip(estimate_2._pauli_sets, estimate_2._sampling_counts):
-                for k, v in counts.items():
-                    if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
-                    else: merged_sampling_counts[pauli_set][k] = v
+        #     allocator_2 = create_variance_proportional_shots_allocator(count_dict_1, var_dict_1)
+        #     estimator_2 = prepare_estimator(self.hardware_type, self.total_shots - sum(count_dict_1.values()), allocator_2)
+        #     estimate_2: _Estimate = estimator_2(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        #     for pauli_set, counts in zip(estimate_2._pauli_sets, estimate_2._sampling_counts):
+        #         for k, v in counts.items():
+        #             if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
+        #             else: merged_sampling_counts[pauli_set][k] = v
             
-            return get_measurement_value(
-                estimate_2._op, estimate_2._const,
-                estimate_2._pauli_sets, estimate_2._pauli_recs, merged_sampling_counts
-            )
+        #     return get_measurement_value(
+        #         estimate_2._op, estimate_2._const,
+        #         estimate_2._pauli_sets, estimate_2._pauli_recs, merged_sampling_counts
+        #     )
         
-        elif(self.optimization_level == 2):
-            merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
-            remaining_shots = self.total_shots
-            # print(remaining_shots)
+        # elif(self.optimization_level == 2):
+        #     merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
+        #     remaining_shots = self.total_shots
+        #     # print(remaining_shots)
 
-            allocator_1 = create_equipartition_shots_allocator()
-            estimator_1 = prepare_estimator(self.hardware_type, 50, allocator_1)
-            estimate_1: _Estimate = estimator_1(self.hamiltonian, self.parametric_circuit, [params])[0]
-            for pauli_set, counts in zip(estimate_1._pauli_sets, estimate_1._sampling_counts):
-                d = {}
-                for k, v in counts.items(): d[k] = v
-                merged_sampling_counts[pauli_set] = d
-            count_dict_1, var_dict_1 = get_measurement_info(
-                estimate_1._op,
-                estimate_1._pauli_sets, estimate_1._pauli_recs, merged_sampling_counts
-            )
-            # print(list(count_dict_1.values()))
-            remaining_shots -= sum([sum(counts.values()) for counts in estimate_1._sampling_counts])
-            # print(remaining_shots)
-            # print([list(counts.values()) for counts in merged_sampling_counts.values()])
+        #     allocator_1 = create_equipartition_shots_allocator()
+        #     estimator_1 = prepare_estimator(self.hardware_type, 50, allocator_1)
+        #     estimate_1: _Estimate = estimator_1(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        #     for pauli_set, counts in zip(estimate_1._pauli_sets, estimate_1._sampling_counts):
+        #         d = {}
+        #         for k, v in counts.items(): d[k] = v
+        #         merged_sampling_counts[pauli_set] = d
+        #     count_dict_1, var_dict_1 = get_measurement_info(
+        #         estimate_1._op,
+        #         estimate_1._pauli_sets, estimate_1._pauli_recs, merged_sampling_counts
+        #     )
+        #     # print(list(count_dict_1.values()))
+        #     remaining_shots -= sum([sum(counts.values()) for counts in estimate_1._sampling_counts])
+        #     # print(remaining_shots)
+        #     # print([list(counts.values()) for counts in merged_sampling_counts.values()])
             
-            allocator_2 = create_proportional_shots_allocator()
-            estimator_2 = prepare_estimator(self.hardware_type, int(remaining_shots * 0.7), allocator_2)
-            estimate_2: _Estimate = estimator_2(self.hamiltonian, self.parametric_circuit, [params])[0]
-            for pauli_set, counts in zip(estimate_2._pauli_sets, estimate_2._sampling_counts):
-                for k, v in counts.items():
-                    if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
-                    else: merged_sampling_counts[pauli_set][k] = v
-            count_dict_2, var_dict_2 = get_measurement_info(
-                estimate_2._op,
-                estimate_2._pauli_sets, estimate_2._pauli_recs, merged_sampling_counts
-            )
-            # print(list(count_dict_2.values()))
-            remaining_shots -= sum([sum(counts.values()) for counts in estimate_2._sampling_counts])
-            # print(remaining_shots)
-            # print([list(counts.values()) for counts in merged_sampling_counts.values()])
+        #     allocator_2 = create_proportional_shots_allocator()
+        #     estimator_2 = prepare_estimator(self.hardware_type, int(remaining_shots * 0.7), allocator_2)
+        #     estimate_2: _Estimate = estimator_2(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        #     for pauli_set, counts in zip(estimate_2._pauli_sets, estimate_2._sampling_counts):
+        #         for k, v in counts.items():
+        #             if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
+        #             else: merged_sampling_counts[pauli_set][k] = v
+        #     count_dict_2, var_dict_2 = get_measurement_info(
+        #         estimate_2._op,
+        #         estimate_2._pauli_sets, estimate_2._pauli_recs, merged_sampling_counts
+        #     )
+        #     # print(list(count_dict_2.values()))
+        #     remaining_shots -= sum([sum(counts.values()) for counts in estimate_2._sampling_counts])
+        #     # print(remaining_shots)
+        #     # print([list(counts.values()) for counts in merged_sampling_counts.values()])
 
-            allocator_3 = create_variance_proportional_shots_allocator(count_dict_2, var_dict_2)
-            estimator_3 = prepare_estimator(self.hardware_type, remaining_shots, allocator_3)
-            estimate_3: _Estimate = estimator_3(self.hamiltonian, self.parametric_circuit, [params])[0]
-            for pauli_set, counts in zip(estimate_3._pauli_sets, estimate_3._sampling_counts):
-                for k, v in counts.items():
-                    if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
-                    else: merged_sampling_counts[pauli_set][k] = v
-            count_dict_3, var_dict_3 = get_measurement_info(
-                estimate_3._op,
-                estimate_3._pauli_sets, estimate_3._pauli_recs, merged_sampling_counts
-            )
-            # print(list(count_dict_3.values()))
-            remaining_shots -= sum([sum(counts.values()) for counts in estimate_3._sampling_counts])
-            # print(remaining_shots)
-            # exit()
-            return get_measurement_value(
-                estimate_3._op, estimate_3._const,
-                estimate_3._pauli_sets, estimate_3._pauli_recs, merged_sampling_counts
-            )
-        raise ValueError("Invalid optimization level")
+        #     allocator_3 = create_variance_proportional_shots_allocator(count_dict_2, var_dict_2)
+        #     estimator_3 = prepare_estimator(self.hardware_type, remaining_shots, allocator_3)
+        #     estimate_3: _Estimate = estimator_3(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        #     for pauli_set, counts in zip(estimate_3._pauli_sets, estimate_3._sampling_counts):
+        #         for k, v in counts.items():
+        #             if(k in merged_sampling_counts[pauli_set]): merged_sampling_counts[pauli_set][k] += v
+        #             else: merged_sampling_counts[pauli_set][k] = v
+        #     count_dict_3, var_dict_3 = get_measurement_info(
+        #         estimate_3._op,
+        #         estimate_3._pauli_sets, estimate_3._pauli_recs, merged_sampling_counts
+        #     )
+        #     # print(list(count_dict_3.values()))
+        #     remaining_shots -= sum([sum(counts.values()) for counts in estimate_3._sampling_counts])
+        #     # print(remaining_shots)
+        #     # exit()
+        #     return get_measurement_value(
+        #         estimate_3._op, estimate_3._const,
+        #         estimate_3._pauli_sets, estimate_3._pauli_recs, merged_sampling_counts
+        #     )
+        # raise ValueError("Invalid optimization level")
