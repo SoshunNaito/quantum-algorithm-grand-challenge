@@ -9,6 +9,8 @@ from quri_parts.circuit.parameter_mapping import LinearParameterMapping, Paramet
 from quri_parts.circuit.parameter_mapping import ParameterOrLinearFunction
 from quri_parts.quantinuum.circuit import RZZ, ZZ, U1q
 
+from BaseAnsatz import BaseAnsatz
+
 # def add_ParametricRZZ_gate(self, qubit_index: int) -> Parameter:
 #     if qubit_index >= self.qubit_count:
 #         raise ValueError(
@@ -38,7 +40,7 @@ def param_convert_func_FourierAnsatz(params: list[float]):
         dst += [s - si, s - sj, s - sk]
     return dst
 
-class FourierAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit):
+class FourierAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit, BaseAnsatz):
     # def approx_cnot(self, hardware_type: str, circuit: LinearMappedUnboundParametricQuantumCircuit, a: int, b: int):
     #     if(hardware_type == "sc"):
     #         circuit.add_CNOT_gate(a, b)
@@ -86,6 +88,7 @@ class FourierAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit):
         self.parameter_convert_func = lambda params: param_convert_func_FourierAnsatz(params)
         self.num_single_qubit_gates = 0
         self.num_multi_qubit_gates = 0
+        self.num_parameters = 0
 
         # if(n_qubits == 4):
         #     self.multiplexed_rotation(hardware_type, circuit, 0, 1, 2, 3)
@@ -121,6 +124,7 @@ class FourierAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit):
                 theta_1, theta_2, theta_3 = circuit.add_parameters(
                     f"theta_{layer_idx}_{i//2}_1", f"theta_{layer_idx}_{i//2}_2", f"theta_{layer_idx}_{i//2}_3"
                 )
+                self.num_parameters += 3
 
                 # diag([0, t2+t3, t1+t3, t1+t2])
                 qi, qj = layer[i], layer[j]

@@ -2,6 +2,7 @@ import sys
 from typing import Callable
 
 from FourierAnsatz import FourierAnsatz
+from problem.GivensAnsatz import GivensAnsatz, GivensAnsatz_it_4, GivensAnsatz_it_8
 sys.path.append("../")
 
 from openfermion.transforms import jordan_wigner
@@ -25,20 +26,21 @@ from quri_parts.algo.mitigation.zne import (
     create_zne_estimator
 )
 
-from utils.challenge_2023 import ChallengeSampling, QuantumCircuitTimeExceededError
+from utils.challenge_2023 import ChallengeSampling, TimeExceededError
 challenge_sampling = ChallengeSampling(noise=True)
 noiseless_sampling = ChallengeSampling(noise=False)
 
 from FourierAnsatz import FourierAnsatz_4, FourierAnsatz_8
 
-def prepare_problem(n_qubits: int) -> Operator:
+def prepare_problem(n_qubits: int, sample_idx : int = 0) -> Operator:
     if(n_qubits not in [4, 8]):
         print("n_qubits must be 4 or 8")
         exit()
     
     # problem setting
+    filename = f"{n_qubits}_qubits_H" if sample_idx == 0 else f"hamiltonian_samples/{n_qubits}_qubits_H_{sample_idx}"
     ham = load_operator(
-        file_name=f"{n_qubits}_qubits_H",
+        file_name=filename,
         data_directory="../hamiltonian",
         plain_text=False,
     )
@@ -55,18 +57,29 @@ def prepare_problem(n_qubits: int) -> Operator:
     # exit()
     return hamiltonian
 
-def prepare_ansatz(hardware_type: str, n_qubits: int) -> FourierAnsatz:
-    n_site = n_qubits // 2
-    # hw_ansatz = HardwareEfficientReal(qubit_count=n_qubits, reps=3)
-    if(n_qubits == 4): hw_ansatz = FourierAnsatz_4(hardware_type)
-    elif(n_qubits == 8): hw_ansatz = FourierAnsatz_8(hardware_type)
-    else:
-        print("n_qubits must be 4 or 8")
-        exit()
-    return hw_ansatz
+# def prepare_ansatz(hardware_type: str, n_qubits: int) -> FourierAnsatz:
+#     n_site = n_qubits // 2
+#     # hw_ansatz = HardwareEfficientReal(qubit_count=n_qubits, reps=3)
+#     if(n_qubits == 4): hw_ansatz = FourierAnsatz_4(hardware_type)
+#     elif(n_qubits == 8): hw_ansatz = FourierAnsatz_8(hardware_type)
+#     else:
+#         print("n_qubits must be 4 or 8")
+#         exit()
+#     return hw_ansatz
+
+# def prepare_ansatz(hardware_type: str, n_qubits: int) -> GivensAnsatz:
+#     if(hardware_type == "sc"):
+#         print("hardware_type must be 'it'")
+#         exit()
+#     if(n_qubits == 4): ansatz = GivensAnsatz_it_4()
+#     elif(n_qubits == 8): ansatz = GivensAnsatz_it_8()
+#     else:
+#         print("n_qubits must be 4 or 8")
+#         exit()
+#     return ansatz
 
 def prepare_sampling_estimator(
-    hardware_type: str, qubit_to_coord: dict[int, tuple[int, int]], num_shots: int,
+    hardware_type: str, num_shots: int,
     shots_allocator = create_proportional_shots_allocator()
 ):
     sampling_estimator = challenge_sampling.create_concurrent_parametric_sampling_estimator(
@@ -74,13 +87,11 @@ def prepare_sampling_estimator(
         measurement_factory = bitwise_commuting_pauli_measurement,
         shots_allocator = shots_allocator,
         hardware_type = hardware_type,
-        qubit_to_coord=qubit_to_coord
     )
     return sampling_estimator
 
 def prepare_noiseless_estimator(
     hardware_type: str,
-    qubit_to_coord: dict[int, tuple[int, int]],
     num_shots: int,
     shots_allocator = create_proportional_shots_allocator()
 ):
@@ -89,7 +100,6 @@ def prepare_noiseless_estimator(
         measurement_factory = bitwise_commuting_pauli_measurement,
         shots_allocator = shots_allocator,
         hardware_type = hardware_type,
-        qubit_to_coord=qubit_to_coord
     )
     return sampling_estimator
 
@@ -143,7 +153,7 @@ class CostEvaluator:
 
     def eval(self, params, time_limit: float = 1000, reset: bool = False, show_output: bool = False):
         if(challenge_sampling.total_quantum_circuit_time > time_limit):
-            raise QuantumCircuitTimeExceededError(challenge_sampling.total_quantum_circuit_time)
+            raise TimeExceededError(challenge_sampling.total_quantum_circuit_time, 0)
         if(reset):
             self.reset()
         

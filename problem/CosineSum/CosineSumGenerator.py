@@ -22,6 +22,9 @@ def GenerateCosineSumInstance(
     for sample_idx in range(num_samples):
         _input = []
         input_params = list(np.random.rand(num_theta_params) * np.pi * 2)
+        if(num_theta_params == 1):
+            input_params = [np.pi * 2 * sample_idx / num_samples]
+        
         for i in range(num_theta_params):
             for j in range(i + 1, num_theta_params):
                 _input.append(math.cos(input_params[i] - input_params[j]))

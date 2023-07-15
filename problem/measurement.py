@@ -1,5 +1,3 @@
-from math import e
-from git import Sequence
 import numpy as np
 from quri_parts.core.operator import Operator
 from quri_parts.core.estimator.sampling.estimator import _Estimate
@@ -35,7 +33,6 @@ from quri_parts.core.operator import PAULI_IDENTITY, CommutablePauliSet, PauliLa
 from quri_parts.core.sampling import MeasurementCounts
 from quri_parts.core.utils.statistics import count_var
 from common import (
-    prepare_problem, prepare_ansatz,
     prepare_sampling_estimator, prepare_zne_estimator, prepare_noiseless_estimator,
     CostEvaluator,
     challenge_sampling,
@@ -43,7 +40,42 @@ from common import (
 )
 from FourierAnsatz import param_convert_func_FourierAnsatz
 from problem.FourierAnsatz import FourierAnsatz
+from GivensAnsatz import GivensAnsatz, GivensAnsatz_it_4, GivensAnsatz_it_8
 from utils.challenge_2023 import ChallengeSampling
+
+def create_threshold_shots_allocator(remove_rate: float = 0.3) -> PauliSamplingShotsAllocator:
+    def allocator(
+        operator: Operator, pauli_sets: Collection[CommutablePauliSet], total_shots: int
+    ) -> Collection[PauliSamplingSetting]:
+        pauli_sets = tuple(pauli_sets)  # to fix the order of elements
+
+        weights = [
+            math.sqrt(sum([abs(operator[pauli_label]) ** 2 for pauli_label in pauli_set]))
+            for pauli_set in pauli_sets
+        ]
+        ascend_order = np.argsort(weights)
+        remove_amount = sum(weights) * remove_rate
+        for idx in ascend_order:
+            if remove_amount <= weights[idx]:
+                break
+            remove_amount -= weights[idx]
+            weights[idx] = 0
+        weight_sum = sum(weights)
+        ratios = [w / weight_sum for w in weights]
+        shots_list = [
+            math.floor(total_shots * ratio) for ratio in ratios
+        ]
+        return frozenset(
+            {
+                PauliSamplingSetting(
+                    pauli_set=pauli_set,
+                    n_shots=n_shots,
+                )
+                for (pauli_set, n_shots) in zip(pauli_sets, shots_list)
+            }
+        )
+
+    return allocator
 
 class MeasurementResult:
     def __init__(self):
@@ -251,7 +283,7 @@ def create_variance_proportional_shots_allocator(
 class Measure:
     def __init__(
         self, noise: bool, hardware_type: str,
-        hamiltonian: Operator, ansatz: FourierAnsatz,
+        hamiltonian: Operator, ansatz: Union[FourierAnsatz, GivensAnsatz],
         total_shots: int,
         optimization_level: int = 0,
         bit_flip_error: float = 0,
@@ -259,7 +291,6 @@ class Measure:
     ) -> None:
         self.noise = noise
         self.hardware_type = hardware_type
-        self.qubit_to_coord = ansatz.qubit_to_coord
         self.parameter_convert_func = ansatz.parameter_convert_func
         self.total_shots = total_shots
         self.hamiltonian = hamiltonian
@@ -274,12 +305,12 @@ class Measure:
 
         # if(self.optimization_level == 0):
         if(True):
-            estimator = prepare_estimator(self.hardware_type, self.qubit_to_coord, self.total_shots)
+            estimator = prepare_estimator(self.hardware_type, self.total_shots, create_proportional_shots_allocator())
             estimate: _Estimate = estimator(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
             cost, error = estimate.value.real, estimate.error
 
             merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
-            pauli_info = []
+            pauli_info: list[Tuple[float, str]] = []
             for pauli_set, counts in zip(estimate._pauli_sets, estimate._sampling_counts):
                 d = {}
                 for k, v in counts.items(): d[k] = v
@@ -289,9 +320,14 @@ class Measure:
                     if(abs(estimate._op[pauli].real) > 1e-3):
                         pauli_info.append((estimate._op[pauli].real, str(pauli)))
             
-            for coef, pauli_str in sorted(pauli_info, key=lambda x: -abs(x[0])):
-                print(coef, pauli_str)
-            exit()
+            # print("".join(["I"] * self.parametric_circuit.qubit_count), estimate._const.real)
+            # for coef, pauli_str in sorted(pauli_info, key=lambda x: -abs(x[0])):
+            #     S = ["I"] * self.parametric_circuit.qubit_count
+            #     for Pn in pauli_str.split():
+            #         P, n = Pn[0], int(Pn[1:])
+            #         S[n] = P
+            #     print("".join(S), coef)
+            # exit()
 
             # cost, error = get_measurement_value(
             #     estimate._op, estimate._const,

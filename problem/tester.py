@@ -1,21 +1,15 @@
-from math import e
 import numpy as np
 from quri_parts.core.operator import Operator
 from quri_parts.core.estimator.sampling.estimator import _Estimate
-from quri_parts.core.state import GeneralCircuitQuantumState, ParametricCircuitQuantumState
 from quri_parts.core.estimator.sampling.pauli import (
     general_pauli_sum_expectation_estimator,
     general_pauli_sum_sample_variance,
     general_pauli_covariance_estimator,
 )
-from collections import defaultdict
 from collections.abc import Mapping
 from typing import Union, cast, Tuple
 
-import math
 from collections.abc import Collection
-
-from numpy.random import default_rng
 
 from quri_parts.core.operator import CommutablePauliSet, Operator
 from quri_parts.core.sampling import PauliSamplingSetting, PauliSamplingShotsAllocator
@@ -132,7 +126,7 @@ class MeasureBatchExecutor:
                     ans += np.mean(arr)
                 # print(" cost(robust mean):", ans)
                 # print(" cost(mitigated):", measure.measurement_result.const + (ans - measure.measurement_result.const) / (1 - 1e-4 * 40))
-                exit()
+                # exit()
             noise_result.append((measure.depolarizing_error, np.array(costs).mean()))
         
         # x = noise_result[0][1]
@@ -173,11 +167,11 @@ class SamplingTester:
         # self.evaluators.append(noiseless_evaluator)
 
         
-        # self.measures[f"<< noiseless >>"] = Measure(
-        #     False, "it",
-        #     self.hamiltonian, ansatz_it,
-        #     1000000
-        # )
+        self.measures[f"<< noiseless >>"] = Measure(
+            False, "it",
+            self.hamiltonian, ansatz_it,
+            1000000
+        )
 
         for (hardware_type, num_shots_list) in [("sc", num_shots_sc), ("it", num_shots_it)]:
             ansatz = ansatz_sc if hardware_type == "sc" else ansatz_it
@@ -193,7 +187,7 @@ class SamplingTester:
 
                 depolarizing_noise = sum([
                     ansatz.num_single_qubit_gates * (1e-3 if hardware_type == "sc" else 1e-5),
-                    # ansatz.num_multi_qubit_gates * (1e-2 if hardware_type == "sc" else 1e-3),
+                    ansatz.num_multi_qubit_gates * (1e-2 if hardware_type == "sc" else 1e-3),
                 ])
                 # print(depolarizing_noise)
                 # exit()
@@ -313,12 +307,12 @@ class SamplingTester:
 # (sc) converted depth  = 47
 
 if __name__ == "__main__":
-    n_qubits = 4
-    hamiltonian = prepare_problem(n_qubits)
+    n_qubits = 8
+    hamiltonian = prepare_problem(n_qubits, 5)
     ansatz_sc = prepare_ansatz("sc", n_qubits)
     ansatz_it = prepare_ansatz("it", n_qubits)
-    print("qubit count:", ansatz_sc._circuit.qubit_count)
-    print("parameter count:", ansatz_sc._circuit.parameter_count)
+    print("qubit count:", ansatz_sc.qubit_count)
+    print("parameter count:", ansatz_sc.parameter_count)
     print("single qubit gates (sc):", ansatz_sc.num_single_qubit_gates)
     print("single qubit gates (it):", ansatz_sc.num_single_qubit_gates)
     print("circuit depth (sc):", ansatz_sc._circuit.depth)
@@ -332,6 +326,6 @@ if __name__ == "__main__":
         10
     )
     for _ in range(1):
-        params = np.random.uniform(0, 2*np.pi, ansatz_sc._circuit.parameter_count).tolist()
+        params = np.random.uniform(0, 2*np.pi, ansatz_sc.parameter_count).tolist()
         # params = [-2.3889003134517903, 0.7109980421928142, -1.5082044138353021, 0.2780291576052872, -2.7621473046388934, -2.3749969173820373, 2.8759078403501803, -0.8428502711504677, 0.16116195030704716, -2.947868832948936, 2.898316848161319, 0.38408492492674196, 2.0112409931333937, 1.6829365442395225, -1.9928004627807248, 0.32950995682303935, -0.7213575495793589, -0.7620976408154134, 0.0469986134375171, 0.5430352940996295, -1.3436492707264938, 1.9400424513223873, -1.2107199558081154, 1.2512990919422544]
         tester.test(params)
