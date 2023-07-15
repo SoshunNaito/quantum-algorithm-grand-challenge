@@ -1,20 +1,12 @@
 from typing import Union, Callable
 import numpy as np
-from scipy.optimize import differential_evolution
-import random
 from quri_parts.circuit import (
     ImmutableLinearMappedUnboundParametricQuantumCircuit,
-    ImmutableBoundParametricQuantumCircuit,
     LinearMappedUnboundParametricQuantumCircuit,
 )
-from quri_parts.algo.optimizer import SPSA, OptimizerStatus
-from quri_parts.circuit.gate import ParametricQuantumGate, QuantumGate
-from quri_parts.circuit.parameter import CONST, Parameter
-from quri_parts.circuit.parameter_mapping import LinearParameterMapping, ParameterOrLinearFunction
-from quri_parts.circuit.parameter_mapping import ParameterOrLinearFunction
-from quri_parts.quantinuum.circuit import RZZ, ZZ, U1q
+from quri_parts.circuit.parameter import Parameter
+from quri_parts.quantinuum.circuit import U1q, RZZ
 
-from BaseAnsatz import BaseAnsatz
 from CosineSum.CosineSumGenerator import GenerateCosineSumInstance
 from CosineSum.CosineSumSolver_CG import CosineSumSolver_CG
 
@@ -32,89 +24,6 @@ class BaseLayer:
     
     def add_gates(self, circuit: LinearMappedUnboundParametricQuantumCircuit):
         raise NotImplementedError
-
-class InitialStateLayer(BaseLayer):
-    def __init__(self, n_qubits: int, configure: str):
-        super().__init__(n_qubits)
-        self.configure = configure
-    
-    def parameter_convert_func(self, params: list[float]) -> list[float]:
-        return params
-
-    def _approx_GHZ_state(
-        self, circuit: LinearMappedUnboundParametricQuantumCircuit,
-        a: int, b : int
-    ):
-        circuit.add_gate(U1q(a, np.pi / 2, -np.pi / 2))
-        circuit.add_gate(U1q(b, np.pi / 2, np.pi / 2))
-        circuit.add_gate(ZZ(a, b))
-        circuit.add_gate(U1q(a, np.pi / 2, np.pi / 2))
-        circuit.add_gate(U1q(a, np.pi / 2, np.pi / 2))
-    
-    def _approx_CX_gate(
-        self, circuit: LinearMappedUnboundParametricQuantumCircuit,
-        a: int, b : int
-    ):
-        circuit.add_gate(U1q(b, np.pi / 2, np.pi))
-        circuit.add_gate(RZZ(a, b, -np.pi / 2))
-        circuit.add_gate(U1q(b, np.pi / 2, np.pi / 2))
-    
-    def _approx_NCX_gate(
-        self, circuit: LinearMappedUnboundParametricQuantumCircuit,
-        a: int, b : int
-    ):
-        circuit.add_gate(U1q(b, np.pi / 2, np.pi))
-        circuit.add_gate(RZZ(a, b, np.pi / 2))
-        circuit.add_gate(U1q(b, np.pi / 2, np.pi / 2))
-    
-    def add_gates(self, circuit: LinearMappedUnboundParametricQuantumCircuit):
-        super().__init__(self.n_qubits)
-        n_zeros = 0
-        n_ones = 0
-        symbols: list[int] = []
-        for i in range(self.n_qubits):
-            if(self.configure[i] == "0"):
-                n_zeros += 1
-            elif(self.configure[i] == "1"):
-                circuit.add_gate(U1q(i, np.pi, np.pi / 2))
-                n_ones += 1
-            elif(self.configure[i] == "s"):
-                symbols.append(i)
-            else:
-                raise ValueError("Invalid configure string")
-        if(self.n_qubits // 2 - n_ones == 1):
-            if(len(symbols) == 1):
-                for i in range(self.n_qubits):
-                    if(self.configure[i] == "s"):
-                        circuit.add_gate(U1q(i, np.pi, np.pi / 2))
-            elif(len(symbols) == 2):
-                a, b = symbols[0], symbols[1]
-                self._approx_GHZ_state(circuit, a, b)
-            else:
-                raise NotImplementedError
-        if(self.n_qubits // 2 - n_ones == 2):
-            if(len(symbols) == 4):
-                a, b, c, d = symbols[0], symbols[1], symbols[2], symbols[3]
-                self._approx_GHZ_state(circuit, a, c)
-                self._approx_CX_gate(circuit, a, b)
-                self._approx_CX_gate(circuit, c, d)
-            else:
-                raise NotImplementedError
-        if(n_zeros == 0 and n_ones == 0):
-            if(len(symbols) == 4):
-                self._approx_GHZ_state(circuit, 0, 2)
-                self._approx_CX_gate(circuit, 0, 1)
-                self._approx_CX_gate(circuit, 2, 3)
-            elif(len(symbols) == 8):
-                self._approx_GHZ_state(circuit, 0, 4)
-                self._approx_CX_gate(circuit, 0, 1)
-                self._approx_CX_gate(circuit, 0, 2)
-                self._approx_CX_gate(circuit, 1, 3)
-                self._approx_CX_gate(circuit, 4, 5)
-                self._approx_CX_gate(circuit, 4, 6)
-                self._approx_CX_gate(circuit, 5, 7)
-            else:
-                raise NotImplementedError
 
 class GivensLayer(BaseLayer):
     def __init__(self, n_qubits: int, layers: list[list[int]], initial_state: Union[str, None] = None):
@@ -229,53 +138,7 @@ class PhaseRotationLayer(BaseLayer):
                     self.num_single_qubit_gates += 0
                     self.num_multi_qubit_gates += 1
 
-class AdditionalLayer(BaseLayer):
-    def __init__(self, n_qubits: int, configure_layers: list[str]):
-        super().__init__(n_qubits)
-        self.configure_layers = configure_layers
-    
-    def parameter_convert_func(self, params: list[float]) -> list[float]:
-        assert(len(params) == self.num_parameters)
-        return params
-    
-    def add_gates(self, circuit: LinearMappedUnboundParametricQuantumCircuit):
-        super().__init__(self.n_qubits)
-        for layer_idx, configure in enumerate(self.configure_layers):
-            for i in range(len(configure)):
-                if(configure[i] == "I"):
-                    continue
-                elif(configure[i] == "X"):
-                    theta = circuit.add_parameter(f"theta_{layer_idx}_X_{i//2}")
-                    self.num_parameters += 1
-                    self.num_circuit_parameters += 1
-                    self.parameter_blocks.append(1)
-
-                    circuit.add_gate(U1q(i, np.pi / 2, np.pi / 2))
-                    circuit.add_ParametricRZ_gate(i, theta)
-                    circuit.add_gate(U1q(i, np.pi / 2, -np.pi / 2))
-                    self.num_single_qubit_gates += 3
-
-                elif(configure[i] == "Y"):
-                    theta = circuit.add_parameter(f"theta_{layer_idx}_Y_{i//2}")
-                    self.num_parameters += 1
-                    self.num_circuit_parameters += 1
-                    self.parameter_blocks.append(1)
-
-                    circuit.add_gate(U1q(i, np.pi / 2, np.pi))
-                    circuit.add_ParametricRZ_gate(i, theta)
-                    circuit.add_gate(U1q(i, np.pi / 2, 0))
-                    self.num_single_qubit_gates += 3
-
-                elif(configure[i] == "Z"):
-                    theta = circuit.add_parameter(f"theta_{layer_idx}_Z_{i//2}")
-                    self.num_parameters += 1
-                    self.num_circuit_parameters += 1
-                    self.parameter_blocks.append(1)
-
-                    circuit.add_ParametricRZ_gate(i, theta)
-                    self.num_single_qubit_gates += 1
-
-class GivensAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit, BaseAnsatz):
+class GivensAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit):
     def __init__(
         self, n_qubits: int,
         layers: list[BaseLayer]
@@ -288,7 +151,6 @@ class GivensAnsatz(ImmutableLinearMappedUnboundParametricQuantumCircuit, BaseAns
         self.num_single_qubit_gates = sum(layer.num_single_qubit_gates for layer in layers)
         self.num_multi_qubit_gates = sum(layer.num_multi_qubit_gates for layer in layers)
         self.num_parameters = sum(layer.num_parameters for layer in layers)
-        self.num_additional_parameters = sum(layer.num_parameters if isinstance(layer, AdditionalLayer) else 0 for layer in layers)
         self.num_circuit_parameters = sum(layer.num_circuit_parameters for layer in layers)
         self.parameter_blocks = []
         for layer in layers: self.parameter_blocks += layer.parameter_blocks
@@ -369,14 +231,6 @@ class GivensAnsatz_it_8(GivensAnsatz):
             PhaseRotationLayer(8, layers),
         ])
 
-class GivensAnsatz_it_8_additional(GivensAnsatz):
-    def __init__(self, base_ansatz: GivensAnsatz_it_8, additional_layer_config: list[str]):
-        layers: list[BaseLayer] = [AdditionalLayer(8, [additional_layer_config[0]])]
-        for idx, layer in enumerate(base_ansatz.layers):
-            layers.append(layer)
-            layers.append(AdditionalLayer(8, [additional_layer_config[(idx + 1) % len(additional_layer_config)]]))
-        super().__init__(8, layers)
-
 class GivensAnsatzOptimizer:
     def __init__(self, ansatz: GivensAnsatz):
         self.ansatz = ansatz
@@ -409,11 +263,3 @@ class GivensAnsatzOptimizer:
                 print(f"{cosineSumInstance.eval(optimal_params)} ({measurement_func(current_params[: idx] + optimal_params + current_params[idx + cnt :])}) :", current_params[idx : idx + cnt], "->", optimal_params)
                 current_params[idx : idx + cnt] = optimal_params
         return current_params
-    
-    def optimize_differential_evolution(self, measurement_func: Callable[[list[float]], float], init_params: list[float]):
-        try:
-            differential_evolution(
-                lambda params: measurement_func(params.tolist()),
-                [(p - np.pi / 4, p + np.pi / 4) for p in init_params],
-            )
-        except Exception as e: pass
