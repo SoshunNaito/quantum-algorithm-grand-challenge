@@ -88,8 +88,6 @@ def mitigated_pauli_expectation_estimator(
     reconstructor_factory: PauliReconstructorFactory,
     bit_flip_rate: float
 ) -> float:
-    """An implementation of :class:`~PauliExpectationEstimator` for a given
-    :class:`PauliReconstructorFactory`."""
     if len(counts) == 0:
         raise ValueError("No measurement counts supplied (counts is empty).")
 
@@ -107,6 +105,7 @@ def mitigated_pauli_expectation_estimator(
 
     n = str(pauli).count(" ") + 1
 
+    # error mitigation for bit-flip noise
     _p = a / (a + b)
     e0, e1 = 1, 0
     for i in range(n):
@@ -123,12 +122,6 @@ def mitigated_pauli_sum_expectation_estimator(
     measurement_result: MeasurementResult,
     bit_flip_rate: float
 ) -> complex:
-    """Estimate expectation value of a weighted sum of commutable Pauli
-    operators from measurement counts and Pauli reconstructor.
-
-    Note that this function calculates the sum for only Pauli operators
-    contained in both of ``pauli_set`` and ``coefs``.
-    """
     pauli_exp_and_coefs = []
     for pauli in pauli_set:
         if(pauli in coefs):
@@ -155,7 +148,8 @@ def get_mitigated_measurement_value(
     _pauli_sets: Iterable[CommutablePauliSet], _pauli_recs: Iterable[PauliReconstructorFactory],
     _sampling_counts: dict[CommutablePauliSet, MeasurementCounts],
     measurement_result: MeasurementResult,
-    bit_flip_rate: float
+    bit_flip_rate: float,
+    depolarizing_rate: float
 ) -> Tuple[float, float]:
     val, var_sum = const, 0.0
     for pauli_set, pauli_rec in zip(
@@ -168,7 +162,12 @@ def get_mitigated_measurement_value(
         var_sum += general_pauli_sum_sample_variance(
             counts, pauli_set, _op, pauli_rec
         ) / sum(counts.values())
-    return val.real, np.sqrt(var_sum)
+    val_identity = _op.constant
+
+    # Mitigating depolarizing noise (PRL, 2021)
+    new_val = val_identity + (val - val_identity) / (1 - depolarizing_rate)
+    new_var_sum = var_sum / (1 - depolarizing_rate) ** 2
+    return new_val.real, np.sqrt(new_var_sum)
 
 class Measure:
     def __init__(
@@ -176,7 +175,8 @@ class Measure:
         hamiltonian: Operator, ansatz: GivensAnsatz,
         total_shots: int,
         optimization_level: int = 0,
-        bit_flip_error: float = 0
+        bit_flip_error: float = 0,
+        depolarizing_rate: float = 0
     ) -> None:
         self.hardware_type = hardware_type
         self.parameter_convert_func = ansatz.parameter_convert_func
@@ -185,25 +185,26 @@ class Measure:
         self.parametric_circuit = ParametricCircuitQuantumState(ansatz.qubit_count, ansatz._circuit)
         self.optimization_level = optimization_level
         self.bit_flip_error = bit_flip_error
+        self.depolarizing_rate = depolarizing_rate
         self.measurement_result = MeasurementResult()
     
     def measure(self, params: list[float]) -> Tuple[float, float]:
-        if(True):
-            estimator = prepare_sampling_estimator(self.hardware_type, self.total_shots, create_proportional_shots_allocator())
-            estimate: _Estimate = estimator(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
-            cost, error = estimate.value.real, estimate.error
+        estimator = prepare_sampling_estimator(self.hardware_type, self.total_shots, create_proportional_shots_allocator())
+        estimate: _Estimate = estimator(self.hamiltonian, self.parametric_circuit, [self.parameter_convert_func(params)])[0]
+        cost, error = estimate.value.real, estimate.error
 
-            merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
-            for pauli_set, counts in zip(estimate._pauli_sets, estimate._sampling_counts):
-                d = {}
-                for k, v in counts.items(): d[k] = v
-                merged_sampling_counts[pauli_set] = d
-            
-            self.measurement_result.const = estimate._const.real
-            cost, error = get_mitigated_measurement_value(
-                estimate._op, estimate._const,
-                estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts,
-                self.measurement_result,
-                self.bit_flip_error
-            )
-            return cost, error
+        merged_sampling_counts: dict[CommutablePauliSet, dict[int, Union[int, float]]] = {}
+        for pauli_set, counts in zip(estimate._pauli_sets, estimate._sampling_counts):
+            d = {}
+            for k, v in counts.items(): d[k] = v
+            merged_sampling_counts[pauli_set] = d
+        
+        self.measurement_result.const = estimate._const.real
+        cost, error = get_mitigated_measurement_value(
+            estimate._op, estimate._const,
+            estimate._pauli_sets, estimate._pauli_recs, merged_sampling_counts,
+            self.measurement_result,
+            self.bit_flip_error,
+            self.depolarizing_rate
+        )
+        return cost, error

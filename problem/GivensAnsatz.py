@@ -55,7 +55,6 @@ class GivensLayer(BaseLayer):
         super().__init__(self.n_qubits)
         if(self.initial_state is not None):
             for i in range(self.n_qubits):
-                # prepare Hartree-Fock state
                 circuit.add_gate(U1q(i, np.pi / 2, -np.pi / 2 if self.initial_state[i] == "0" else np.pi / 2))
                 self.num_single_qubit_gates += 1
         else:
@@ -105,7 +104,7 @@ class PhaseRotationLayer(BaseLayer):
     def add_gates(self, circuit: LinearMappedUnboundParametricQuantumCircuit):
         super().__init__(self.n_qubits)
         for layer_idx, layer in enumerate(self.layers):
-            if(layer_idx == 0):
+            if(layer_idx == len(self.layers) - 1):
                 for j in range(1, len(layer), 2):
                     i = j - 1
                     theta_1, theta_2, theta_3 = circuit.add_parameters(
@@ -226,7 +225,6 @@ class GivensAnsatz_it_8(GivensAnsatz):
                 initial_states = initial_states[1:]
 
         super().__init__(8, [
-            # InitialStateLayer(8, initial_state_config),
             GivensLayer(8, layers, initial_state_config),
             PhaseRotationLayer(8, layers),
         ])
@@ -248,7 +246,6 @@ class GivensAnsatzOptimizer:
                 idx = sum(self.ansatz.parameter_blocks[: block_idx])
                 def measure(params: list[float]) -> float:
                     val = measurement_func(current_params[: idx] + params + current_params[idx + cnt :])
-                    # print(f" {val}")
                     return val
                 cosineSumInstance = GenerateCosineSumInstance(
                     cnt, True, measure,
@@ -260,6 +257,6 @@ class GivensAnsatzOptimizer:
                         for _ in range(100)
                     ], True
                 )
-                print(f"{cosineSumInstance.eval(optimal_params)} ({measurement_func(current_params[: idx] + optimal_params + current_params[idx + cnt :])}) :", current_params[idx : idx + cnt], "->", optimal_params)
+                # print(f"{cosineSumInstance.eval(optimal_params)} ({measurement_func(current_params[: idx] + optimal_params + current_params[idx + cnt :])}) :", current_params[idx : idx + cnt], "->", optimal_params)
                 current_params[idx : idx + cnt] = optimal_params
         return current_params
